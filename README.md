@@ -1,10 +1,19 @@
 # Med-Banana-50K
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Med--Banana--50K-blue)](https://huggingface.co/datasets/RichardChenZH/Med-Banana-50K) [![arXiv](https://img.shields.io/badge/arXiv-2511.00801-b31b1b.svg)](https://arxiv.org/abs/2511.00801)
 
-This repository contains the official data generation pipeline and data samples for **Med-Banana-50K**, a large-scale, cross-modality dataset for medical image editing, as presented in our paper:
+## 🚀 News
+- **[2026-02-08]** 🍌 **FULL DATASET RELEASE!** We are thrilled to announce that the complete **Med-Banana-50K** dataset is now officially open-sourced! This release includes **114,093** records across three modalities:
+  - ✅ **50,635** High-quality Successful Edits (Lesion Addition & Removal)
+  - ❌ **37,822** Failed Attempts with full conversation logs and LLM-as-Judge feedback (Ideal for RLHF/DPO & Preference Learning!)
+  - 🖼️ **25,636** Original clinical source images with precise paired alignment.
+  - 🔍 **Enhanced Metadata**: Every record now features `source_image` linking and detailed `judge_verdict` (Compliance, Structure, Realism, Fidelity).
+  - 📥 **Explore on Hugging Face:** [RichardChenZH/Med-Banana-50K](https://huggingface.co/datasets/RichardChenZH/Med-Banana-50K)
+  - 📄 **Read the Paper:** [arXiv:2511.00801](https://arxiv.org/abs/2511.00801)
 
-**[Med-Banana-50K: A Large-Scale Cross-Modality Dataset for Medical Image Editing](Med_banana.pdf)**
+This repository contains the official data generation pipeline and data samples for **Med-Banana-50K**, a large-scale, cross-modality dataset for medical image editing.
+
+**[Med-Banana-50K: A Large-Scale Cross-Modality Dataset for Medical Image Editing](https://arxiv.org/abs/2511.00801)**
 
 ## About The Project
 
@@ -18,15 +27,15 @@ This repository provides the scripts used to generate the dataset and a small sa
 
 ## Dataset Access
 
+**Full Dataset:**
+
+The full Med-Banana-50K dataset, including ~50K successful edits and ~37K failed attempts with full conversation logs, is available on Hugging Face.
+
+**[🤗 Download Med-Banana-50K on Hugging Face](https://huggingface.co/datasets/RichardChenZH/Med-Banana-50K)**
+
 **Data Samples:**
 
 A small subset of the data is available in the `samples/` directory to illustrate the data format and directory structure.
-
-**Full Dataset:**
-
-The full Med-Banana-50K dataset, including ~50K successful edits and ~37K failed attempts with full conversation logs, is currently under review. Upon acceptance, it will be released on Hugging Face.
-
-**Hugging Face Link: [Link will be available here]**
 
 ## Getting Started
 
@@ -76,11 +85,11 @@ Please refer to the original sources for licenses of the base datasets (MIMIC-CX
 If you find our work useful in your research, please consider citing our paper:
 
 ```bibtex
-@article{medbanana2024,
+@article{chen2025medbanana,
   title={Med-Banana-50K: A Large-Scale Cross-Modality Dataset for Medical Image Editing},
-  author={Anonymous Authors},
-  journal={arXiv preprint arXiv:XXXX.XXXXX},
-  year={2024}
+  author={Chen, Zhihui and others},
+  journal={arXiv preprint arXiv:2511.00801},
+  year={2025}
 }
 ```
 
