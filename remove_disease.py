@@ -10,6 +10,7 @@ from pathlib import Path
 from PIL import Image
 from io import BytesIO
 import json
+import logging
 import argparse
 import time
 import threading
