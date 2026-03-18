@@ -8,6 +8,7 @@ from google import genai
 from google.genai import types
 from pathlib import Path
 import json
+import logging
 import argparse
 import time
 from tqdm import tqdm
