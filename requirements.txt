@@ -1,0 +1,30 @@
+# Core runtime shared by the scheduler, edit servers and evaluation scripts
+openai>=1.40.0
+requests>=2.31.0
+Pillow>=10.0.0
+tqdm>=4.66.0
+numpy>=1.24.0
+fastapi>=0.110.0
+uvicorn>=0.27.0
+pydantic>=2.0.0
+gradio>=4.0.0
+
+# Dataset construction (dataset_construction/*.py)
+google-genai>=1.0.0
+
+# Objective metrics (inference/obj-metric/)
+torch>=2.1.0
+torchvision>=0.16.0
+lpips>=0.1.4
+transformers>=4.40.0
+
+# Refinement-trajectory plots (inference/raw-output-with-failure/)
+matplotlib>=3.7.0
+
+# Install PyTorch with the CUDA build that matches your platform separately.
+#
+# Optional training / serving stacks, installed separately (see README):
+#   ms-swift    verifier + refiner SFT              https://github.com/modelscope/ms-swift
+#   deepspeed   ZeRO-2 for the SFT runs
+#   vllm        serving the verifier + refiner      https://github.com/vllm-project/vllm
+#   diffsynth   editor LoRA training + edit server  https://github.com/modelscope/DiffSynth-Studio

@@ -1,0 +1,47 @@
+{
+  "refiner": {
+    "base_url": "http://127.0.0.1:8001/v1",
+    "model": "models/Qwen3.5-9B-prompt-refiner",
+    "api_key": "EMPTY"
+  },
+  "verifier": {
+    "base_url": "http://127.0.0.1:8002/v1",
+    "model": "models/Qwen3.5-9B-prompt-verifier",
+    "api_key": "EMPTY"
+  },
+  "edit_servers": {
+    "qwen2511": {
+      "urls": [
+        "http://127.0.0.1:9011"
+      ],
+      "health_path": "/health",
+      "edit_path": "/edit"
+    },
+    "firered11": {
+      "urls": [
+        "http://127.0.0.1:9111"
+      ],
+      "health_path": "/health",
+      "edit_path": "/edit"
+    }
+  },
+  "output_root": "verify-refine-loop/output-r20",
+  "vllm_chat_completions_extra": {
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    }
+  },
+  "max_rounds": 25,
+  "refine_budget": 20,
+  "max_retries": 3,
+  "max_api_retries": 8,
+  "http_timeout_sec": 300,
+  "raw_log_max_bytes": 65536,
+  "concurrent_per_backend": 4,
+  "edit_defaults": {
+    "seed": 0,
+    "num_inference_steps": 20,
+    "cfg_scale": 4.0,
+    "negative_prompt": "added overlay text or captions, watermarks, halos or sharp pasted seams, duplicated or mirrored shapes, global relighting outside the focal edit, extra fake blotches away from the touched zone, cropping or frame drift"
+  }
+}
