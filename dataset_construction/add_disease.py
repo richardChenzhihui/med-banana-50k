@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-添加病症：将正常图像编辑成病症图像
-支持多线程、断点续传、API失败重试
+Add pathology: edit normal medical images into diseased ones.
+Multi-threaded, resumable across runs, with retries on API failure.
 """
 
 from google import genai
@@ -17,16 +17,24 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
 
+# Default Gemini model IDs used to build Med-Banana-80K. `gemini-2.5-flash-image-preview`
+# is the API id of the image editor released under the "Nano Banana" name; the reasoning
+# model drives prompt generation, prompt refinement and LLM-as-Judge verification.
+# Override on the command line with --editor-model / --verifier-model.
+DEFAULT_EDITOR_MODEL = "gemini-2.5-flash-image-preview"
+DEFAULT_VERIFIER_MODEL = "gemini-2.5-pro"
+
 class DiseaseAdder:
-    def __init__(self, dataset_path, output_base, max_workers=20, max_rounds=5):
+    def __init__(self, dataset_path, output_base, max_workers=20, max_rounds=5,
+                 editor_model=DEFAULT_EDITOR_MODEL, verifier_model=DEFAULT_VERIFIER_MODEL):
         """
-        初始化病症添加器
+        Initialise the disease adder.
         
         Args:
-            dataset_path: 数据集路径（如 full-data/MIMIC_single_disease_selection_dim1024_1k_per_class）
-            output_base: 输出基础路径（如 img_gen）
-            max_workers: 并发线程数
-            max_rounds: 最多尝试轮次
+            dataset_path: dataset directory, e.g. full-data/Chest-XRay
+            output_base: base directory for generated output
+            max_workers: number of concurrent worker threads
+            max_rounds: maximum edit-verify-refine rounds per image
         """
         self.client = genai.Client()
         self.dataset_path = Path(dataset_path)
@@ -34,99 +42,101 @@ class DiseaseAdder:
         self.output_base = Path(output_base)
         self.max_workers = max_workers
         self.max_rounds = max_rounds
+        self.editor_model = editor_model
+        self.verifier_model = verifier_model
         
-        # 输出目录
+        # output directories
         self.output_dir = self.output_base / f"{self.dataset_name}-edit"
         self.failed_dir = self.output_base / f"{self.dataset_name}-edit-failed"
         
-        # 创建目录
+        # create output directories
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.failed_dir.mkdir(parents=True, exist_ok=True)
         
-        # 进度和失败记录
+        # progress and failure logs
         self.progress_file = self.output_dir / "progress.json"
         self.api_failures_file = self.output_dir / "api_failures.json"
         self.failed_summary_file = self.failed_dir / "failed_summary.json"
         self.final_prompts_file = self.output_dir / "final_prompts.json"
         self.conversations_file = self.output_dir / "all_conversations.json"
         
-        # 加载进度
+        # load progress for resume
         self.progress = self.load_progress()
         self.api_failures = self.load_api_failures()
         self.failed_summary = self.load_failed_summary()
         self.final_prompts = self.load_final_prompts()
         self.all_conversations = self.load_all_conversations()
         
-        # 线程锁
+        # thread locks
         self.lock = threading.Lock()
         
     def load_progress(self):
-        """加载进度"""
+        """Load progress, enabling resume across runs."""
         if self.progress_file.exists():
             with open(self.progress_file, 'r') as f:
                 return json.load(f)
         return {}
     
     def save_progress(self):
-        """保存进度（线程安全）"""
+        """Persist progress (thread-safe)."""
         with self.lock:
             with open(self.progress_file, 'w') as f:
                 json.dump(self.progress, f, indent=2)
     
     def load_api_failures(self):
-        """加载API失败记录"""
+        """Load the API-failure log."""
         if self.api_failures_file.exists():
             with open(self.api_failures_file, 'r') as f:
                 return json.load(f)
         return []
     
     def save_api_failures(self):
-        """保存API失败记录（线程安全）"""
+        """Persist the API-failure log (thread-safe)."""
         with self.lock:
             with open(self.api_failures_file, 'w') as f:
                 json.dump(self.api_failures, f, indent=2, ensure_ascii=False)
     
     def load_failed_summary(self):
-        """加载失败任务摘要"""
+        """Load the failed-task summary."""
         if self.failed_summary_file.exists():
             with open(self.failed_summary_file, 'r') as f:
                 return json.load(f)
         return []
     
     def save_failed_summary(self):
-        """保存失败任务摘要（线程安全）"""
+        """Persist the failed-task summary (thread-safe)."""
         with self.lock:
             with open(self.failed_summary_file, 'w') as f:
                 json.dump(self.failed_summary, f, indent=2, ensure_ascii=False)
     
     def load_final_prompts(self):
-        """加载最终prompts"""
+        """Load the accepted prompts."""
         if self.final_prompts_file.exists():
             with open(self.final_prompts_file, 'r') as f:
                 return json.load(f)
         return {}
     
     def save_final_prompts(self):
-        """保存最终prompts（线程安全）"""
+        """Persist the accepted prompts (thread-safe)."""
         with self.lock:
             with open(self.final_prompts_file, 'w') as f:
                 json.dump(self.final_prompts, f, indent=2, ensure_ascii=False)
     
     def load_all_conversations(self):
-        """加载所有对话记录"""
+        """Load all conversation records."""
         if self.conversations_file.exists():
             with open(self.conversations_file, 'r') as f:
                 return json.load(f)
         return {}
     
     def save_all_conversations(self):
-        """保存所有对话记录（线程安全）"""
+        """Persist all conversation records (thread-safe)."""
         with self.lock:
             with open(self.conversations_file, 'w') as f:
                 json.dump(self.all_conversations, f, indent=2, ensure_ascii=False)
     
     def api_call_with_retry(self, func, max_retries=3):
-        """API调用带重试"""
+        """Call the API with exponential-backoff retries."""
         for attempt in range(max_retries):
             try:
                 return func(), None
@@ -139,7 +149,7 @@ class DiseaseAdder:
         return None, "Max retries exceeded"
     
     def extract_thinking_and_content(self, response):
-        """提取思考过程和内容"""
+        """Split the response into its thinking trace and its content."""
         thinking = ""
         content = ""
         
@@ -154,7 +164,7 @@ class DiseaseAdder:
         return thinking.strip(), content.strip()
     
     def generate_initial_prompt(self, disease_name, dataset_type):
-        """生成初始编辑prompt"""
+        """Generate the round-1 editing prompt."""
         system_instruction = f"""You are a medical image editing expert. Generate a clear, concise prompt to edit a normal {dataset_type} image to show {disease_name}.
 
 Requirements:
@@ -184,7 +194,7 @@ Return ONLY the editing prompt in English, no explanations."""
         
         def call():
             return self.client.models.generate_content(
-                model="gemini-2.5-pro",
+                model=self.verifier_model,
                 contents=system_instruction,
                 config=types.GenerateContentConfig(
                     thinking_config=types.ThinkingConfig(include_thoughts=True)
@@ -200,18 +210,18 @@ Return ONLY the editing prompt in English, no explanations."""
     
     def update_prompt(self, original_image_path, disease_name, prompt_history, dataset_type):
         """
-        更新编辑prompt
+        Refine the editing prompt from the attempt history.
         
         Args:
-            original_image_path: 原始图像路径
-            disease_name: 疾病名称
-            prompt_history: 历史prompt列表，格式为 [{"round": 1, "prompt": "...", "verification": {...}}, ...]
-            dataset_type: 数据集类型
+            original_image_path: path to the source image
+            disease_name: target pathology
+            prompt_history: prior attempts, as [{"round": 1, "prompt": "...", "verification": {...}}, ...]
+            dataset_type: imaging-modality description
         """
         with open(original_image_path, 'rb') as f:
             image_bytes = f.read()
         
-        # 构建历史失败记录
+        # build the failure history
         history_text = ""
         for i, history in enumerate(prompt_history, 1):
             history_text += f"""
@@ -264,7 +274,7 @@ Return ONLY the improved editing prompt in English, no explanations."""
         
         def call():
             return self.client.models.generate_content(
-                model="gemini-2.5-pro",
+                model=self.verifier_model,
                 contents=[
                     types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg'),
                     system_instruction
@@ -282,12 +292,12 @@ Return ONLY the improved editing prompt in English, no explanations."""
         return thinking, prompt, None
     
     def edit_image(self, image_path, edit_prompt):
-        """编辑图像"""
+        """Apply the editing prompt to the source image."""
         image = Image.open(image_path)
         
         def call():
             return self.client.models.generate_content(
-                model="gemini-2.5-flash-image-preview",
+                model=self.editor_model,
                 contents=[edit_prompt, image]
             )
         
@@ -295,7 +305,7 @@ Return ONLY the improved editing prompt in English, no explanations."""
         if error:
             return None, error
         
-        # 提取生成的图像
+        # extract the generated image
         for part in response.candidates[0].content.parts:
             if part.inline_data is not None:
                 edited_image = Image.open(BytesIO(part.inline_data.data))
@@ -304,8 +314,8 @@ Return ONLY the improved editing prompt in English, no explanations."""
         return None, "No image generated"
     
     def verify_edited_image(self, edited_image, disease_name, dataset_type):
-        """验证编辑后的图像"""
-        # 转换为字节
+        """Verify the edited image with the LLM-as-Judge."""
+        # convert to bytes
         img_byte_arr = BytesIO()
         edited_image.save(img_byte_arr, format='JPEG')
         img_bytes = img_byte_arr.getvalue()
@@ -343,7 +353,7 @@ Only qualified if ALL three aspects are true AND no MAJOR fidelity issues detect
         
         def call():
             return self.client.models.generate_content(
-                model="gemini-2.5-pro",
+                model=self.verifier_model,
                 contents=[
                     types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg'),
                     verification_instruction
@@ -359,9 +369,9 @@ Only qualified if ALL three aspects are true AND no MAJOR fidelity issues detect
         
         thinking, content = self.extract_thinking_and_content(response)
         
-        # 解析JSON
+        # parse the JSON verdict
         try:
-            # 提取JSON
+            # extract the JSON block
             if '```json' in content:
                 content = content.split('```json')[1].split('```')[0].strip()
             elif '```' in content:
@@ -373,7 +383,7 @@ Only qualified if ALL three aspects are true AND no MAJOR fidelity issues detect
             return thinking, None, f"JSON parse error: {str(e)}"
     
     def get_dataset_type(self):
-        """获取数据集类型描述"""
+        """Describe the imaging modality, keyword-matched from the dataset name."""
         name = self.dataset_name.lower()
         if 'mimic' in name or 'chest' in name:
             return "chest X-ray"
@@ -384,17 +394,17 @@ Only qualified if ALL three aspects are true AND no MAJOR fidelity issues detect
         return "medical"
     
     def process_single_task(self, normal_image_path, disease_name):
-        """处理单个编辑任务"""
+        """Run the edit-verify-refine loop for one addition task."""
         image_name = Path(normal_image_path).stem
         task_key = f"{image_name}-{disease_name}"
         
-        # 检查是否已完成
+        # skip tasks already completed
         if task_key in self.progress:
             return {"status": "skipped", "task": task_key}
         
         dataset_type = self.get_dataset_type()
         
-        # 对话记录
+        # conversation records
         conversation = {
             "image": Path(normal_image_path).name,
             "disease": disease_name,
@@ -407,11 +417,11 @@ Only qualified if ALL three aspects are true AND no MAJOR fidelity issues detect
         for round_num in range(1, self.max_rounds + 1):
             round_data = {"round": round_num}
             
-            # 1. 生成或更新prompt
+            # 1. generate or refine the prompt
             if round_num == 1:
                 thinking, prompt, error = self.generate_initial_prompt(disease_name, dataset_type)
                 if error:
-                    # API失败 - 记录并标记为已处理（跳过）
+                    # API failure: record it and mark the task processed so the run can move on
                     with self.lock:
                         self.api_failures.append({
                             "task": task_key,
@@ -432,7 +442,7 @@ Only qualified if ALL three aspects are true AND no MAJOR fidelity issues detect
                 }
                 current_prompt = prompt
             else:
-                # 构建完整的历史记录供LLM分析
+                # build the full history for the model to analyse
                 prompt_history = []
                 for prev_round in conversation["rounds"]:
                     if "generate_prompt" in prev_round and "verification" in prev_round:
@@ -442,12 +452,12 @@ Only qualified if ALL three aspects are true AND no MAJOR fidelity issues detect
                             "verification": prev_round["verification"]
                         })
                 
-                # 使用完整历史更新prompt
+                # refine the prompt using the full attempt history
                 thinking, prompt, error = self.update_prompt(
                     normal_image_path, disease_name, prompt_history, dataset_type
                 )
                 if error:
-                    # API失败 - 记录并标记为已处理（跳过）
+                    # API failure: record it and mark the task processed so the run can move on
                     with self.lock:
                         self.api_failures.append({
                             "task": task_key,
@@ -468,13 +478,13 @@ Only qualified if ALL three aspects are true AND no MAJOR fidelity issues detect
                 }
                 current_prompt = prompt
             
-            # 2. 编辑图像
+            # 2. edit the image
             edited_image, error = self.edit_image(normal_image_path, current_prompt)
             if error:
                 round_data["edit_result"] = {"success": False, "error": error}
                 conversation["rounds"].append(round_data)
                 
-                # API失败 - 记录并标记为已处理（跳过）
+                # API failure: record it and mark the task processed so the run can move on
                 with self.lock:
                     self.api_failures.append({
                         "task": task_key,
@@ -491,13 +501,13 @@ Only qualified if ALL three aspects are true AND no MAJOR fidelity issues detect
             
             round_data["edit_result"] = {"success": True}
             
-            # 3. 验证图像
+            # 3. verify the result
             thinking, verification, error = self.verify_edited_image(edited_image, disease_name, dataset_type)
             if error:
                 round_data["verification"] = {"error": error}
                 conversation["rounds"].append(round_data)
                 
-                # API失败 - 记录并标记为已处理（跳过）
+                # API failure: record it and mark the task processed so the run can move on
                 with self.lock:
                     self.api_failures.append({
                         "task": task_key,
@@ -516,9 +526,9 @@ Only qualified if ALL three aspects are true AND no MAJOR fidelity issues detect
             round_data["verification"]["thinking_summary"] = thinking
             conversation["rounds"].append(round_data)
             
-            # 4. 检查是否合格
+            # 4. accept or reject
             if verification.get("qualified", False):
-                # 成功！保存图像
+                # accepted: write the image
                 output_subdir = self.output_dir / disease_name
                 output_subdir.mkdir(parents=True, exist_ok=True)
                 output_path = output_subdir / f"{image_name}-{disease_name}-edit.jpeg"
@@ -528,12 +538,12 @@ Only qualified if ALL three aspects are true AND no MAJOR fidelity issues detect
                 conversation["final_prompt"] = current_prompt
                 conversation["final_image_path"] = str(output_path)
                 
-                # 保存到集中的对话记录
+                # append to the central conversation log
                 with self.lock:
                     self.all_conversations[task_key] = conversation
                 self.save_all_conversations()
                 
-                # 保存最终prompt
+                # record the accepted prompt
                 with self.lock:
                     self.final_prompts[task_key] = {
                         "image": Path(normal_image_path).name,
@@ -544,30 +554,30 @@ Only qualified if ALL three aspects are true AND no MAJOR fidelity issues detect
                     }
                 self.save_final_prompts()
                 
-                # 更新进度
+                # update progress
                 with self.lock:
                     self.progress[task_key] = "success"
                 self.save_progress()
                 
                 return {"status": "success", "task": task_key, "rounds": round_num}
             else:
-                # 保存失败的中间图像
+                # keep the rejected candidate
                 failed_subdir = self.failed_dir / disease_name
                 failed_subdir.mkdir(parents=True, exist_ok=True)
                 failed_path = failed_subdir / f"{image_name}-{disease_name}-edit-failed-{round_num}.jpeg"
                 edited_image.save(failed_path, 'JPEG', quality=95)
         
-        # 所有轮次都失败 - 图像仅保存在failed目录
+        # every round was rejected: the images live only in the failed directory
         conversation["status"] = "failed"
         conversation["final_prompt"] = current_prompt
         conversation["final_image_path"] = str(self.failed_dir / disease_name / f"{image_name}-{disease_name}-edit-failed-{self.max_rounds}.jpeg")
         
-        # 保存到集中的对话记录
+        # append to the central conversation log
         with self.lock:
             self.all_conversations[task_key] = conversation
         self.save_all_conversations()
         
-        # 保存到失败摘要（包含完整对话历史）
+        # append to the failure summary, with the full conversation
         with self.lock:
             self.failed_summary.append({
                 "task": task_key,
@@ -577,11 +587,11 @@ Only qualified if ALL three aspects are true AND no MAJOR fidelity issues detect
                 "rounds": self.max_rounds,
                 "last_verification": conversation["rounds"][-1]["verification"],
                 "final_image_path": conversation["final_image_path"],
-                "full_conversation": conversation  # 保存完整对话历史
+                "full_conversation": conversation  # full conversation history
             })
         self.save_failed_summary()
         
-        # 保存最终prompt
+        # record the accepted prompt
         with self.lock:
             self.final_prompts[task_key] = {
                 "image": Path(normal_image_path).name,
@@ -592,7 +602,7 @@ Only qualified if ALL three aspects are true AND no MAJOR fidelity issues detect
             }
         self.save_final_prompts()
         
-        # 更新进度（标记为已处理，避免重复）
+        # mark processed so a resumed run does not repeat it
         with self.lock:
             self.progress[task_key] = "failed"
         self.save_progress()
@@ -600,23 +610,23 @@ Only qualified if ALL three aspects are true AND no MAJOR fidelity issues detect
         return {"status": "failed", "task": task_key, "rounds": self.max_rounds}
     
     def get_all_tasks(self):
-        """获取所有待处理任务"""
+        """Enumerate every task to process."""
         tasks = []
         
-        # 找到正常图像目录
+        # locate the normal/ directory
         normal_dir = self.dataset_path / "normal"
         if not normal_dir.exists():
             raise ValueError(f"Normal directory not found: {normal_dir}")
         
-        # 找到所有病症类别
+        # collect the disease categories
         disease_dirs = [d for d in self.dataset_path.iterdir() 
                        if d.is_dir() and d.name != "normal"]
         disease_names = [d.name for d in disease_dirs]
         
-        # 找到所有正常图像
+        # collect the normal source images
         normal_images = list(normal_dir.glob("*.jpeg")) + list(normal_dir.glob("*.jpg"))
         
-        # 为每个正常图像生成所有病症的编辑任务
+        # cross product: every normal image x every disease directory
         for normal_img in normal_images:
             for disease in disease_names:
                 tasks.append((str(normal_img), disease))
@@ -624,22 +634,22 @@ Only qualified if ALL three aspects are true AND no MAJOR fidelity issues detect
         return tasks
     
     def run(self):
-        """运行完整工作流"""
+        """Run the full workflow over every task."""
         tasks = self.get_all_tasks()
         
         print(f"\n{'='*80}")
-        print(f"添加病症 - {self.dataset_name}")
+        print(f"Add pathology - {self.dataset_name}")
         print(f"{'='*80}")
-        print(f"数据集路径: {self.dataset_path}")
-        print(f"输出目录: {self.output_dir}")
-        print(f"总任务数: {len(tasks)}")
-        print(f"已完成: {len(self.progress)}")
-        print(f"待处理: {len(tasks) - len(self.progress)}")
-        print(f"并发线程: {self.max_workers}")
-        print(f"最大轮次: {self.max_rounds}")
+        print(f"Dataset path: {self.dataset_path}")
+        print(f"Output directory: {self.output_dir}")
+        print(f"Total tasks: {len(tasks)}")
+        print(f"Already done: {len(self.progress)}")
+        print(f"Pending: {len(tasks) - len(self.progress)}")
+        print(f"Worker threads: {self.max_workers}")
+        print(f"Max rounds: {self.max_rounds}")
         print(f"{'='*80}\n")
         
-        # 统计
+        # statistics
         stats = {
             "success": 0,
             "failed": 0,
@@ -647,65 +657,73 @@ Only qualified if ALL three aspects are true AND no MAJOR fidelity issues detect
             "skipped": 0
         }
         
-        # 多线程处理
+        # run tasks concurrently
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = {
                 executor.submit(self.process_single_task, img_path, disease): (img_path, disease)
                 for img_path, disease in tasks
             }
             
-            for future in tqdm(as_completed(futures), total=len(futures), desc="处理中"):
+            for future in tqdm(as_completed(futures), total=len(futures), desc="processing"):
                 try:
                     result = future.result()
                     stats[result["status"]] += 1
                 except Exception as e:
-                    print(f"\n任务异常: {e}")
+                    print(f"\nTask raised: {e}")
                     stats["api_failed"] += 1
         
-        # 打印最终统计
+        # print final statistics
         print(f"\n{'='*80}")
-        print(f"处理完成！")
+        print("Done.")
         print(f"{'='*80}")
-        print(f"成功: {stats['success']}")
-        print(f"失败: {stats['failed']}")
-        print(f"API失败: {stats['api_failed']}")
-        print(f"跳过: {stats['skipped']}")
-        print(f"\n对话记录: {self.conv_dir}")
-        print(f"最终prompts: {self.final_prompts_file}")
-        print(f"失败摘要: {self.failed_summary_file}")
+        print(f"Accepted: {stats['success']}")
+        print(f"Rejected: {stats['failed']}")
+        print(f"API failed: {stats['api_failed']}")
+        print(f"Skipped: {stats['skipped']}")
+        print(f"\nConversation records: {self.conv_dir}")
+        print(f"Accepted prompts: {self.final_prompts_file}")
+        print(f"Failure summary: {self.failed_summary_file}")
         if self.api_failures:
-            print(f"API失败记录: {self.api_failures_file}")
+            print(f"API failure log: {self.api_failures_file}")
         print(f"{'='*80}\n")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='添加病症：将正常图像编辑成病症图像')
+    parser = argparse.ArgumentParser(description='Add pathology: edit normal medical images into diseased ones (Med-Banana-80K construction)')
     parser.add_argument('--dataset', type=str, required=True,
-                       help='数据集名称（如 Chest-XRay, Brain-MRI, Fundus）')
+                       help='Dataset folder name under dataset_construction/full-data/ '
+                            '(e.g. Chest-XRay, Brain-MRI, Fundus)')
     parser.add_argument('--max-workers', type=int, default=20,
-                       help='并发线程数（默认: 20）')
+                       help='Number of concurrent worker threads (default: 20)')
     parser.add_argument('--max-rounds', type=int, default=5,
-                       help='最大尝试轮次（默认: 5）')
-    
+                       help='Maximum edit-verify-refine rounds per image (default: 5)')
+    parser.add_argument('--editor-model', type=str, default=DEFAULT_EDITOR_MODEL,
+                       help=f'Gemini image-editing model (default: {DEFAULT_EDITOR_MODEL})')
+    parser.add_argument('--verifier-model', type=str, default=DEFAULT_VERIFIER_MODEL,
+                       help='Gemini reasoning model used for prompt generation, prompt '
+                            f'refinement and verification (default: {DEFAULT_VERIFIER_MODEL})')
+
     args = parser.parse_args()
-    
-    # 路径设置
+
     BASE_DIR = Path(__file__).parent
     dataset_path = BASE_DIR / "full-data" / args.dataset
-    
+
     if not dataset_path.exists():
-        print(f"错误: 数据集不存在 {dataset_path}")
-        return
-    
-    # 创建处理器
+        raise SystemExit(
+            f"Dataset not found: {dataset_path}\n"
+            f"Expected layout: dataset_construction/full-data/{args.dataset}/"
+            "{normal,<disease-1>,<disease-2>,...}/"
+        )
+
     adder = DiseaseAdder(
         dataset_path=dataset_path,
         output_base=BASE_DIR,
         max_workers=args.max_workers,
-        max_rounds=args.max_rounds
+        max_rounds=args.max_rounds,
+        editor_model=args.editor_model,
+        verifier_model=args.verifier_model,
     )
-    
-    # 运行
+
     adder.run()
 
 
