@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+.venv/
+venv/
+
+# macOS / editor / agent tooling
+.DS_Store
+.claude/
+.idea/
+.vscode/
+
+# Model checkpoints: keep the placement guide, ignore the weights.
+# NOTE: this must be `models/*`, not `models/`. Git cannot re-include a file inside a
+# directory excluded with a trailing slash, which is why models/README.md was never
+# actually tracked before.
+models/*
+!models/README.md
+
+# Generic run outputs
+**/output/
+**/outputs/
+**/outputs-*/
+**/batch/
+**/batch_*/
+**/*.log
+**/.cache/
+
+# Edit-verify-refine runtime outputs
+verify-refine-loop/outputs/
+verify-refine-loop/output-r10/
+verify-refine-loop/output-r20/
+
+# Evaluation outputs
+inference/mllm-judge/outputs*/
+inference/openai/outputs*/
+inference/gemini/outputs*/
+inference/result/
+inference/result-ablation/
+inference/result-tmp/
+
+# Training outputs
+finetune/output/
+medbanana-train/outputs/
+medbanana-train/data/
+
+# Dataset construction: source images and generated edits stay local
+dataset_construction/full-data/
+dataset_construction/*-edit/
+dataset_construction/*-edit-failed/
+dataset_construction/*-remove/
+dataset_construction/*-remove-failed/
+
+# Locally downloaded Med-Banana-80K trees
+data/
